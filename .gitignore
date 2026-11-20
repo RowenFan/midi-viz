@@ -1,0 +1,6 @@
+# 个人设置和标定（每台机器自己的）
+state.json
+.server.log
+.claude/
+.DS_Store
+node_modules/

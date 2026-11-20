@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>钢琴光谱</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..700;1,6..96,400..700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #04050c; --fg: #e8ecff; --dim: rgba(232,236,255,.55); --glow: #9fb4ff; }
+  html, body { margin: 0; height: 100%; background: var(--bg); overflow: hidden; }
+  body { display: grid; place-items: center; font-family: "PingFang SC", -apple-system, sans-serif; color: var(--fg); }
+  body.serif .title, body.serif .handle { font-family: "Songti SC", "STSong", serif; }
+  #stage { position: relative; aspect-ratio: 9 / 16; height: 100vh; max-width: 100vw; container-type: size; }
+  #stage canvas { width: 100% !important; height: 100% !important; display: block; }
+  .vignette { position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(120% 80% at 50% 45%, transparent 55%, rgba(0,0,0,.65) 100%); }
+
+  /* 画面上的文字：尺寸跟着画面走（cqh = 画面高度的 1%） */
+  .title { position: absolute; left: 7%; right: 7%; top: 4%; pointer-events: none; letter-spacing: .08em;
+    text-shadow: 0 0 1.2cqh var(--glow); }
+  .title b { display: block; font-size: 2.8cqh; font-weight: 500; }
+  .title span { display: block; font-size: 1.3cqh; color: var(--dim); margin-top: .5em; }
+  .handle { position: absolute; left: 7%; bottom: 2.2%; font-size: 1.35cqh; letter-spacing: .1em; color: var(--dim); pointer-events: none; }
+  .credit { position: absolute; right: 4%; bottom: 1.2%; font-size: 1cqh; color: rgba(232,236,255,.35); pointer-events: none; }
+
+  #play { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(4,5,12,.55);
+    border: 0; color: var(--fg); font: inherit; font-size: 2.4cqh; letter-spacing: .2em; cursor: pointer; }
+  #play[hidden] { display: none; }
+  #hud { position: absolute; top: 1%; right: 2%; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; transition: opacity .4s; }
+
+  /* 叠加模式：铺满整个窗口、纯黑底，OBS 里用「滤色」叠到摄像头上 */
+  body.overlay { background: #000; }
+  body.overlay #stage { aspect-ratio: auto; width: 100vw; height: 100vh; max-width: none; }
+  body.overlay .vignette { display: none; }
+  /* ---------- 排版：乐谱刻印风 ----------
+     和弦、速度、力度、音名用 Bodoni Moda（高反差，像刻印乐谱）；中文用苹方细体。
+     和弦按 lead sheet 写法：根音大写，性质/延伸音上标，斜杠低音略小；减和弦写 °、半减写 ø。 */
+  :root { --engrave: "Bodoni Moda", "Bodoni 72", "Didot", serif; --ink: #f4efe6; }
+  #chordBox { position: absolute; left: 0; right: 0; top: 44%; text-align: center; pointer-events: none; color: var(--ink); }
+  .chord { font-family: var(--engrave); font-size: 7cqh; line-height: 1; font-weight: 500; min-height: 1em;
+    text-shadow: 0 0 .25em var(--glow), 0 0 .7em var(--glow); transition: opacity .45s ease, transform .45s ease; }
+  .chord.out { opacity: 0; transform: translateY(-.15em); }
+  .chord .acc { font-size: .6em; vertical-align: .5em; margin-left: .02em; }
+  .chord .q { font-size: .78em; font-weight: 400; }
+  .chord sup { font-size: .46em; vertical-align: .95em; margin-left: .05em; font-weight: 400; }
+  .chord .bass { font-size: .6em; font-weight: 400; margin-left: .06em; }
+  .chord .bass i { font-style: normal; opacity: .7; margin-right: .04em; }
+  /* 第二行：速度记号 ♩ = 100、力度记号（粗斜体 mf）、调性 */
+  #info { display: flex; justify-content: center; align-items: baseline; gap: 1em; margin-top: 1cqh;
+    font-family: var(--engrave); font-size: 1.9cqh; color: rgba(244,239,230,.82); text-shadow: 0 0 .5em var(--glow); }
+  #info[hidden], #stats[hidden] { display: none; }
+  #dyn { font-style: italic; font-weight: 700; font-size: 1.3em; letter-spacing: -.02em; min-width: 1.6em; }
+  #keyName { font-family: "PingFang SC", sans-serif; font-weight: 300; font-size: .7em; letter-spacing: .12em; opacity: .8; }
+  #stats { margin-top: .5cqh; font-family: var(--engrave); font-size: 1.35cqh; color: rgba(244,239,230,.5); }
+  /* 音名：停在琴键正上方，斜体字母 + 小号八度数字，原地淡出 */
+  #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+  #labels span { position: absolute; transform: translate(-50%, -100%); font-family: var(--engrave); font-style: italic; font-weight: 500;
+    color: var(--ink); white-space: nowrap; text-shadow: 0 0 .4em var(--glow), 0 0 1em var(--glow); }
+  #labels sub { font-size: .55em; font-style: normal; vertical-align: -.1em; margin-left: .03em; opacity: .7; }
+  /* 字幕：苹方细体，字距放开 */
+  #caption { position: absolute; left: 6%; right: 6%; top: 12%; text-align: center; pointer-events: none; font-size: 2cqh;
+    font-weight: 300; letter-spacing: .16em; color: var(--ink); text-shadow: 0 0 .6em var(--glow), 0 1px 3px rgba(0,0,0,.7); }
+  body.overlay #caption { top: auto; bottom: 7%; font-size: 3cqh; }
+  body.serif #caption { font-family: "Songti SC", "STSong", serif; }
+
+  /* 叠加模式：整块"立"在琴的左后方，位置、朝向、大小每帧由脚本按透视算（这里是标准尺寸） */
+  body.overlay #chordBox { left: 0; top: 0; right: auto; text-align: left; transform-origin: 0 100%; white-space: nowrap; }
+  body.overlay .chord { font-size: 120px; }
+  body.overlay .chord.out { transform: none; }
+  body.overlay #info { justify-content: flex-start; font-size: 32px; margin-top: 12px; }
+  body.overlay #stats { font-size: 21px; margin-top: 6px; }
+  #calib { position: absolute; inset: 0; z-index: 5; }
+  #calib[hidden] { display: none; }
+  #calImg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; opacity: .75; }
+  #calImg[hidden] { display: none; }
+  #calSvg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  /* 拖动点：中间透明的小圆圈 + 十字准星，正中心就是标定点 */
+  .calH { position: absolute; width: 22px; height: 22px; transform: translate(-50%, -50%); border-radius: 50%;
+    border: 2px solid #ff5aa8; box-shadow: 0 0 0 1px rgba(0,0,0,.6); cursor: none; user-select: none; touch-action: none; }
+  /* 透明的大抓取区：在圈外 40px 内按住都能拖，光标在上面时隐藏，不挡视线 */
+  .calH > .grab { position: absolute; inset: -40px; border-radius: 50%; cursor: none; }
+  .calH.sel { border-color: #7dffb0; }
+  .calH.sel::before, .calH.sel::after { background: #7dffb0; }
+  .calH.sel .calL { background: #2bbf74; }
+  .calH::before, .calH::after { content: ""; position: absolute; left: 50%; top: 50%; background: #ff5aa8; transform: translate(-50%, -50%); }
+  .calH::before { width: 1px; height: 30px; }
+  .calH::after { width: 30px; height: 1px; }
+  .calL { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 2px 7px; border-radius: 999px;
+    background: #ff5aa8; color: #fff; font-size: 12px; white-space: nowrap; pointer-events: none; }
+  .calTip { position: absolute; left: 16px; bottom: 16px; max-width: 520px; padding: 10px 14px; border-radius: 10px; background: rgba(10,12,22,.85);
+    font-size: 13px; line-height: 1.7; }
+
+  /* 设置面板：按 H 或点右上角齿轮打开；鼠标停 3 秒后齿轮自动隐藏，方便录屏 */
+  #gear { position: fixed; top: 12px; left: 12px; width: 36px; height: 36px; border-radius: 50%; border: 1px solid rgba(255,255,255,.2);
+    background: rgba(20,22,36,.7); color: var(--fg); font-size: 18px; cursor: pointer; transition: opacity .4s; }
+  body.idle #gear, body.idle #hud { opacity: 0; }
+  body.idle { cursor: none; }
+  #panel { position: fixed; top: 56px; left: 12px; width: 280px; max-height: calc(100vh - 80px); overflow: auto; padding: 14px 16px;
+    background: rgba(14,16,28,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; font-size: 13px; z-index: 10;
+    box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+  #panel[hidden] { display: none; }
+  #panel h3 { margin: 0 0 10px; font-size: 14px; font-weight: 600; }
+  #panel label { display: block; margin: 10px 0 4px; color: var(--dim); }
+  #panel input[type=text], #panel select { width: 100%; box-sizing: border-box; padding: 6px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.15);
+    background: #0b0d18; color: var(--fg); font: inherit; }
+  #panel input[type=range] { width: 100%; }
+  #panel .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; color: var(--fg); }
+  #panel .row input { margin: 0; }
+  #panel .tip { color: var(--dim); font-size: 12px; margin-top: 12px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="vignette"></div>
+  <div class="title"><b id="tTitle"></b><span id="tSub"></span></div>
+  <div id="chordBox"><div class="chord out" id="chord"></div>
+    <div id="info"><span id="bpm"></span><span id="dyn"></span><span id="keyName"></span></div>
+    <div id="stats"></div></div>
+  <div id="labels"></div>
+  <div id="caption"></div>
+  <div class="handle" id="tHandle"></div>
+  <div class="credit" id="credit">MIDI: Bernd Krüger · piano-midi.de · CC BY-SA 3.0 DE</div>
+  <button id="play">点击播放</button>
+  <div id="hud"></div>
+</div>
+
+<button id="gear" title="设置（P）">⚙</button>
+<form id="panel" hidden autocomplete="off">
+  <h3>画面设置</h3>
+  <label>标题</label><input type="text" name="title">
+  <label>副标题</label><input type="text" name="sub">
+  <label>署名（左下角，如 @你的抖音号）</label><input type="text" name="handle">
+  <label>字幕（歌词或一句话，随时可改）</label><input type="text" name="caption">
+  <label>字体</label>
+  <select name="font"><option value="sans">黑体（现代）</option><option value="serif">宋体（古典）</option></select>
+  <label>配色方案</label>
+  <select name="palette">
+    <option value="moon">月光（蓝紫 → 月白）</option>
+    <option value="aurora">水中倒影（青绿 → 冰蓝 → 紫）</option>
+    <option value="neon">烟火（电青 → 靛 → 品红）</option>
+    <option value="sunset">晚霞（玫红 → 橘 → 暖金）</option>
+    <option value="glacier">雪上足迹（深蓝 → 冰白）</option>
+    <option value="gold">金鱼（古铜 → 金 → 香槟）</option>
+    <option value="sakura">亚麻色头发的少女（樱粉 → 薰衣草）</option>
+    <option value="jade">沉没的教堂（墨绿 → 玉 → 月白）</option>
+    <option value="rainbow">彩虹（按音高红 → 紫）</option>
+    <option value="magenta">霓虹粉</option>
+    <option value="amber">琥珀</option>
+    <option value="ice">冰蓝</option>
+    <option value="lime">荧光绿</option>
+  </select>
+  <label>光柱样式</label>
+  <select name="style"><option value="blocks">发光方块</option><option value="capsule">胶囊光柱</option><option value="thin">细光丝</option></select>
+  <label>上色方式</label>
+  <select name="colorMode">
+    <option value="harmony">随和声变色</option>
+    <option value="gradient">按音高渐变（低音冷、高音暖）</option>
+    <option value="segment">按音区分段</option>
+    <option value="velocity">按力度（轻冷、重暖）</option>
+    <option value="hands">左右手两种颜色</option>
+    <option value="flow">流动（颜色沿琴键慢慢流过）</option>
+    <option value="single">单色</option>
+  </select>
+  <div class="row"><input type="checkbox" name="chord" id="cChord"><label for="cChord" style="margin:0;color:inherit">显示和弦名</label></div>
+  <div class="row"><input type="checkbox" name="staff" id="cStaff"><label for="cStaff" style="margin:0;color:inherit">显示五线谱</label></div>
+  <div class="row"><input type="checkbox" name="spectrum" id="cSpec"><label for="cSpec" style="margin:0;color:inherit">显示频谱</label></div>
+  <div class="row"><input type="checkbox" name="keyline" id="cLine"><label for="cLine" style="margin:0;color:inherit">琴键光带（叠加模式）</label></div>
+  <div class="row"><input type="checkbox" name="pulse" id="cPulse"><label for="cPulse" style="margin:0;color:inherit">律动（重音推出光波、整体呼吸）</label></div>
+  <div class="row"><input type="checkbox" name="smoke" id="cSmoke"><label for="cSmoke" style="margin:0;color:inherit">光柱冒烟</label></div>
+  <div class="row"><input type="checkbox" name="aurora" id="cAur"><label for="cAur" style="margin:0;color:inherit">极光背景</label></div>
+  <div class="row"><input type="checkbox" name="labels" id="cLab"><label for="cLab" style="margin:0;color:inherit">光柱上显示音名</label></div>
+  <div class="row"><input type="checkbox" name="info" id="cInfo"><label for="cInfo" style="margin:0;color:inherit">信息栏（BPM · 力度 · 统计）</label></div>
+  <div class="row"><input type="checkbox" name="keysig" id="cKey"><label for="cKey" style="margin:0;color:inherit">显示调性</label></div>
+  <div class="row"><input type="checkbox" name="arcs" id="cArc"><label for="cArc" style="margin:0;color:inherit">和弦光弧</label></div>
+  <div class="row"><input type="checkbox" name="flares" id="cFlare"><label for="cFlare" style="margin:0;color:inherit">击键星芒</label></div>
+  <label>光柱上升速度</label><input type="range" name="rise" min="1" max="5" step="0.1">
+  <label>辉光强度</label><input type="range" name="glow" min="0.2" max="1.8" step="0.05">
+  <div class="tip">设置会自动保存。按 P 开关这个面板（叠加模式下按 C 标定琴键位置）；鼠标停 3 秒，齿轮和右上角状态会自动隐藏，可以直接录屏。</div>
+</form>
+
+<script src="data/clair_de_lune.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tone@14.7.77/build/Tone.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<!-- 每次加载都带时间戳，改了代码刷新就生效，不吃浏览器缓存 -->
+<script type="module">import("./main.js?v=" + Date.now());</script>
+</body>
+</html>
